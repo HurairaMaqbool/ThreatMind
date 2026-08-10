@@ -1,318 +1,241 @@
-# ThreatMind
+# KQL Detection Engine — v2 (six-agent architecture)
 
-Autonomous Cyber Threat Intelligence & SOC Orchestration Platform
+Turns security-blog write-ups into **validated Microsoft Defender Advanced Hunting
+(KQL) detections**, end to end, with a Streamlit dashboard to browse them.
 
-[![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.109-green.svg)](https://fastapi.tiangolo.com/)
-[![Streamlit](https://img.shields.io/badge/Streamlit-1.31-red.svg)](https://streamlit.io/)
-[![LangGraph](https://img.shields.io/badge/LangGraph-1.0-purple.svg)](https://www.langchain.com/langgraph)
-[![ChromaDB](https://img.shields.io/badge/ChromaDB-VectorDB-orange.svg)](https://www.trychroma.com/)
+It runs **fully offline in demo mode** — no API key, no network — so you can try
+everything immediately. In live mode it fetches real feeds and uses Claude.
 
 ---
 
-## 1. Project Overview
+## What's new in v2
 
-**ThreatMind** is an enterprise-grade autonomous cyber threat intelligence (CTI) pipeline and Security Operations Center (SOC) orchestration platform. It automates the complete intelligence lifecycle: continuously scraping CTI feeds, extracting MITRE ATT&CK tactics, techniques, and Indicators of Compromise (IOCs), synthesizing grounded Microsoft Sentinel KQL queries, validating rule syntax against real table schemas, converting detection rules into cross-platform SIEM formats (Splunk, Elastic, QRadar, Wazuh, SentinelOne, CrowdStrike), and delivering alerts to SOC teams.
+The pipeline was rebuilt into **six specialised agents** (was a single
+analyze→generate pass):
 
----
-
-## 2. Features
-
-- **11 Autonomous LangGraph Agents**: Modular stateful multi-agent execution pipeline.
-- **Intelligent Threat Triage**: Filters non-huntable articles early to optimize LLM token efficiency.
-- **Hybrid RAG Retrieval**: Semantic vector retrieval from ChromaDB grounded in official Microsoft Sentinel schemas and historical KQL patterns.
-- **Self-Healing KQL Validation**: Automated validator with a retry loop (up to 3 retries) and intelligent column auto-correction (e.g., `CommandLine` → `ProcessCommandLine`).
-- **Multi-SIEM Translation**: Converts Sentinel KQL into **Splunk SPL**, **Elasticsearch Lucene**, **IBM QRadar AQL**, **Wazuh XML**, **SentinelOne**, and **CrowdStrike LogScale**.
-- **Multi-Channel Alerting**: Instant HTML email summaries and Slack/Discord webhook alerts for `HIGH` and `CRITICAL` threats.
-- **RESTful API & SOC Dashboard**: Fully documented FastAPI server paired with an interactive Streamlit SOC dashboard.
-- **SSRF & Security Safeguards**: Built-in safeguards against private IP, loopback, link-local, and SSRF targets.
-
----
-
-## 3. Architecture
-
-```mermaid
-flowchart TD
-    A[Threat Intelligence RSS Feeds] --> B[Scheduler & Crawler]
-    C[FastAPI Trigger Endpoint /trigger] --> B
-    B --> D[11-Agent LangGraph Pipeline]
-    
-    subgraph LangGraph Pipeline
-        D --> E[Agent 00: Triage]
-        E -->|Huntable| F[Agent 01: Discovery]
-        E -->|Not Huntable| END1[End Pipeline]
-        F --> G[Agent 02: Extraction]
-        G --> H[Agent 03: Threat Intel]
-        H --> I[Agent 04: Coverage Planner]
-        I --> J[Agent 05: RAG Grounding]
-        J --> K[Agent 06: Reasoning]
-        K --> L[Agent 07: KQL Generator]
-        L --> M[Agent 08: Validator]
-        M -->|Score < 70 & Retry < 3| L
-        M -->|Passed / Max Retries| N[Agent 09: Coverage Critic]
-        N --> O[Agent 10: Report & Dispatch]
-    end
-    
-    O --> P[(SQLite DB)]
-    O --> Q[(ChromaDB Vector Store)]
-    O --> R[Multi-SIEM Converter]
-    O --> S[Email & Slack/Discord Alerts]
-    
-    P --> T[Streamlit SOC Dashboard]
-    Q --> T
-    P --> U[FastAPI REST API]
-    Q --> U
+```
+            ┌─────────┐
+ raw post → │ TRIAGE  │  huntable? (drop vendor news / opinion / no-behavior)
+            └────┬────┘
+                 │ huntable
+            ┌────▼────┐
+            │ DEDUP   │  post-level: never reprocess a blog already seen (SQLite)
+            └────┬────┘
+            ┌────▼──────────┐
+            │ EXTRACTION    │  every behavior → MITRE ATT&CK + rich artifacts
+            └────┬──────────┘     (processes, command_lines, registry, lolbins, network…)
+            ┌────▼──────────┐
+            │ COVERAGE      │  THE BRAIN (separate from the generator):
+            │ PLANNER       │  Pyramid-of-Pain tier × Defender table → detection angles
+            └────┬──────────┘
+            ┌────▼──────────┐
+            │ GENERATOR     │  one schema-grounded KQL per angle (fan-out)
+            └────┬──────────┘
+            ┌────▼──────────┐     ┌─────────── tools (code, not prompts) ───────────┐
+            │ VALIDATOR     │ ◄──►│ kql_lint · schema_check (vs authoritative schema) │
+            │ (retry loop)  │     │ · dry_run.  Rewrites on failure, caps at N iters. │
+            └────┬──────────┘     └───────────────────────────────────────────────────┘
+            ┌────▼──────────┐
+            │ ENRICH        │  evasion · resilience · operationalization · Sigma rule
+            └────┬──────────┘
+            ┌────▼──────────┐
+            │ COVERAGE      │  "did we cover everything?" gap report per threat
+            │ CRITIC        │
+            └────┬──────────┘
+            ┌────▼──────────┐
+            │ DEDUP QUERIES │  similarity search (Jaccard) vs a persistent query library
+            └───────────────┘
 ```
 
----
-
-## 4. 11-Agent Pipeline
-
-| Agent | Name | Responsibilities |
-| :--- | :--- | :--- |
-| **00** | **Triage** | Determines whether an article contains actionable/huntable threat intelligence; fails closed if irrelevant. |
-| **01** | **Discovery** | Downloads raw HTML with rotated User-Agents, configurable timeouts, and exponential retries. |
-| **02** | **Extraction** | Cleans HTML by stripping non-content elements and extracts sanitized title, date, and body text. |
-| **03** | **Threat Intel** | Extracts MITRE ATT&CK tactics, techniques, malware families, threat actors, and IOCs (IPs, domains, hashes). |
-| **04** | **Coverage Planner** | Formulates multi-angle detection strategies mapped to Sentinel tables (`DeviceProcessEvents`, `DeviceNetworkEvents`, etc.). |
-| **05** | **RAG** | Grounding layer performing semantic vector retrieval for table schemas, past threat reports, and KQL patterns. |
-| **06** | **Reasoning** | Correlates behaviors, IOCs, and table/column mappings without exposing internal Chain-of-Thought in public API output. |
-| **07** | **KQL Generator** | Synthesizes precise Microsoft Sentinel KQL detection and hunting queries based on schema context. |
-| **08** | **Validator** | Scores queries against syntax rules and auto-corrects legacy column names. Triggers retry loop if score < 70. |
-| **09** | **Coverage Critic** | Compares generated rules against threat behaviors, identifies gaps, and assigns severity (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`). |
-| **10** | **Report & Dispatch** | Produces executive summary reports, invokes multi-SIEM translation, persists data, and dispatches alerts. |
+Plus:
+- **Authoritative Defender schema registry** (`app/schema.py`) grounds the generator
+  and validator — hallucinated columns like `CommandLineText` are rejected.
+- **Two dedup guarantees**: posts (so a blog is never reprocessed) **and** queries
+  (so the same detection isn't promoted twice).
+- **Streamlit dashboard** with a detailed **Queries** tab (metric cards, charts,
+  filterable table, per-query copy/download).
 
 ---
 
-## 5. RAG Architecture
-
-ThreatMind uses a hybrid RAG architecture backed by ChromaDB vector collections:
-
-- **Collection `sentinel_schema`**: Stores indexed column metadata and table schema definitions for exact syntax grounding.
-- **Collection `kql_library`**: Stores historical high-performing KQL patterns indexed by technique and behavior.
-- **Collection `threat_intel`**: Embedded past threat intelligence reports for contextual similarity matching.
-
----
-
-## 6. Microsoft Sentinel KQL Generation
-
-The KQL generation engine creates targeted detection rules based on extracted MITRE ATT&CK techniques:
-
-```kusto
-DeviceProcessEvents
-| where TimeGenerated >= ago(1d)
-| where ProcessCommandLine has_any ("powershell.exe", "-enc", "DownloadString")
-| project TimeGenerated, DeviceName, AccountName, ProcessCommandLine, InitiatingProcessFileName
-```
-
----
-
-## 7. KQL Validation
-
-Agent 08 performs automatic scoring and schema validation:
-
-- **Syntax Gate**: Validates pipe operators (`|`), time filters (`TimeGenerated`), and search conditions.
-- **Column Auto-Corrector**: Automatically remaps legacy column names (e.g., `CommandLine` → `ProcessCommandLine`, `ParentProcess` → `InitiatingProcessFileName`).
-- **Validation Retry Loop**: If a query scores below `70`, it is routed back to Agent 07 for re-generation (up to 3 retries).
-
----
-
-## 8. Multi-SIEM Conversion
-
-ThreatMind converts Sentinel KQL rules into 6 destination SIEM formats:
-
-- **Splunk SPL**: Native pySigma translation (`index=* sourcetype=...`)
-- **Elasticsearch Lucene**: Lucene syntax for Elastic Security
-- **IBM QRadar AQL**: AQL `SELECT` queries
-- **CrowdStrike LogScale**: Falcon LogScale / Humio syntax
-- **Wazuh**: Structured `<rule>` XML blocks for `ossec.conf`
-- **SentinelOne**: Deep Visibility event queries
-
----
-
-## 9. FastAPI API
-
-FastAPI provides administrative telemetry and pipeline control endpoints:
+## Quick start (offline demo — recommended first run)
 
 ```bash
-# Start API Server
-uvicorn api.main:app --host 0.0.0.0 --port 8000
-```
-
-- **Docs**: `http://localhost:8000/docs`
-- **Liveness**: `http://localhost:8000/health`
-- **Readiness**: `http://localhost:8000/ready`
-
----
-
-## 10. Streamlit SOC Dashboard
-
-The SOC Dashboard is organized into 5 dedicated views:
-
-1. **Live Feed**: Real-time RSS crawler monitoring, feed controls, and manual pipeline triggers.
-2. **Threat Details**: Threat intelligence reports, extracted IOCs, and severity badges.
-3. **Queries**: Multi-platform query inspection (Sentinel KQL, Splunk SPL, Elastic, QRadar, Wazuh, SentinelOne).
-4. **Statistics**: SOC metrics, validation score distributions, and table coverage charts.
-5. **KQL Library**: Semantic vector search engine for historical detection rules.
-
----
-
-## 11. Alerting
-
-- **SMTP Email**: HTML-formatted threat reports containing executive summaries, severity badges, and links to the SOC Dashboard.
-- **Slack & Discord Webhooks**: Structured block message notifications sent immediately when a `HIGH` or `CRITICAL` threat is processed.
-
----
-
-## 12. Installation
-
-```bash
-# 1. Clone repository
-git clone https://github.com/HurairaMaqbool/ThreatMind.git
-cd ThreatMind
-
-# 2. Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# 3. Install dependencies
 pip install -r requirements.txt
 
-# 4. Copy environment configuration
-cp .env.example .env
+# 1) generate detections from the bundled sample posts (no key/network needed)
+python run.py --reset --demo
+
+# 2) open the dashboard
+streamlit run dashboard/app.py        # → http://localhost:8501
 ```
 
----
+In the dashboard: **Scanner** runs the pipeline, **Queries** is the detection
+browser, **Downloads** exports `.kql`/Sigma/JSON, **History** lists past scans.
 
-## 13. Environment Variables
+> You can also just click **▶ Run scan** on the Scanner tab — you don't have to use
+> the CLI at all.
 
-Configure `.env` with your API keys and server options:
-
-```ini
-# Required LLM Credentials
-GROQ_API_KEY=gsk_your_groq_api_key_here
-GROQ_MODEL=llama-3.3-70b-versatile
-
-# Storage Paths
-DATABASE_PATH=data/autothreat.db
-CHROMA_PATH=chroma_db
-
-# Alerting
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USERNAME=alerts@company.com
-SMTP_PASSWORD=your_app_password
-ALERT_EMAIL_FROM=threatmind@company.com
-ALERT_EMAIL_TO=soc@company.com
-
-SLACK_WEBHOOK_URL=https://hooks.slack.com/services/xxx/yyy/zzz
-DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/xxx/yyy
-
-# Server Config
-API_HOST=0.0.0.0
-API_PORT=8000
-DASHBOARD_URL=http://localhost:8501
-MIN_VALIDATION_SCORE=70
-MAX_VALIDATION_RETRIES=3
-```
-
----
-
-## 14. Local Development
+### Legacy/bonus web dashboard (FastAPI)
 
 ```bash
-# 1. Verify system preflight status
-python scripts/preflight.py
-
-# 2. Run REST API
-uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
-
-# 3. Run SOC Dashboard
-streamlit run dashboard/app.py --server.port 8501
+python run.py --demo --serve          # → http://localhost:8000
 ```
 
 ---
 
-## 15. Docker Deployment
+## Live mode (real feeds + Claude)
 
 ```bash
-# Start all services (API + Dashboard)
-docker-compose up -d --build
+export ANTHROPIC_API_KEY=sk-ant-...    # optional: without it, live falls back to the rule engine
+python run.py                          # fetches the 10 configured blogs
+streamlit run dashboard/app.py
+```
 
-# View container logs
-docker-compose logs -f
+Live mode uses the verbatim agent prompts in `app/prompts.py`. If a model call
+fails, that single item falls back to the offline engine, so a run never crashes.
 
-# Stop containers
-docker-compose down
+---
+
+## CLI
+
+```
+python run.py --demo            # offline run on bundled sample posts
+python run.py                   # live run (fetch the 10 feeds)
+python run.py --serve           # launch the FastAPI dashboard (:8000)
+python run.py --reset           # wipe persistent stores (seen_index + query library)
+python run.py --demo --embed    # bake results into web/index.html (standalone file)
+python run.py --port 9000 --serve
 ```
 
 ---
 
-## 16. API Endpoints
+## Assumed data schema (`results.json`)
 
-| Method | Endpoint | Description |
-| :--- | :--- | :--- |
-| `GET` | `/health` | Liveness check returning system operational status. |
-| `GET` | `/ready` | Deep readiness probe checking SQLite & ChromaDB health. |
-| `GET` | `/stats` | Telemetry statistics on threats, queries, and vector records. |
-| `GET` | `/threats` | List all threat intelligence reports with pagination. |
-| `GET` | `/threats/{id}` | Retrieve specific threat report and associated SIEM rules. |
-| `GET` | `/queries` | Filter generated queries by platform or threat ID. |
-| `GET` | `/kql/{angle_id}` | Fetch specific KQL detection rule from vector library. |
-| `POST` | `/trigger?url=` | Asynchronously run 11-agent pipeline on target blog URL. |
+The dashboard reads this file (written after every scan). Shape:
+
+```jsonc
+{
+  "generated_at": "ISO-8601",
+  "mode": "demo|live",
+  "sources": ["BleepingComputer", ...],
+  "pipeline": {                       // headline counts
+    "collected", "huntable", "new", "duplicates", "behaviors", "angles",
+    "queries", "valid", "rewritten_by_loop", "flagged_for_review",
+    "duplicate_queries_vs_library", "seen_index_size", "query_library_size"
+  },
+  "coverage_summary": {
+    "threats", "threats_with_behavioral_query",
+    "threats_without_behavioral_query", "platforms_covered", "overall"
+  },
+  "messages": [ { "agent": "...", "detail": "..." } ],   // agent trace
+  "threats": [ {                       // one per huntable post (nested view)
+    "threat_id", "source", "url", "title", "published", "summary",
+    "threat_type", "severity", "triage": {...}, "iocs": {...}, "cves": [...],
+    "behaviors": [ { "behavior_id", "description", "attack_technique",
+                     "attack_tactic", "artifacts": {...} } ],
+    "angles":    [ { "angle_id", "behavior_id", "tier", "durability",
+                     "target_table", "detection_idea", "expected_false_positives" } ],
+    "queries":   [ <query> ],
+    "coverage_critic": { "behaviors_without_behavioral_detection": [...],
+                         "uncovered_data_sources": [...], "skipped_behaviors": [...],
+                         "overall_coverage": "complete|partial" }
+  } ],
+  "queries": [ <query> ]               // FLAT list — this is what the Queries tab renders
+}
+```
+
+Each **`<query>`** (the unit the dashboard table shows):
+
+```jsonc
+{
+  "query_id", "angle_id", "behavior_id", "threat_id", "threat_name",
+  "title", "platform",            // platform = Defender product (Endpoint / Office 365 / Identity)
+  "target_table",                 // the Advanced Hunting table
+  "technique", "tactic",
+  "tier",                         // Pyramid of Pain: behavioral | tool_artifact | indicator
+  "durability", "severity",       // severity derived from the ATT&CK tactic
+  "kql", "sigma", "detection_idea", "expected_false_positives",
+  "validation": { "status", "valid", "iterations", "changes", "lint",
+                  "schema_errors", "dry_run" },
+  "evasion": [...], "resilience": [...], "operationalization": {...},
+  "duplicate", "duplicate_of"
+}
+```
+
+If a query ever lacks `tier`, the dashboard derives it from the KQL content
+(`tools.classify_tier`).
 
 ---
 
-## 17. Testing
+## Dashboard — Queries tab (component layout)
 
-Run the full automated test suite:
+```
+┌───────────────────────────────────────────────────────────────────────┐
+│  [ Total queries ] [ Platforms ] [ Threats w/ behavioral ] [ Gaps ]     │  ← metric cards
+├───────────────────────────────────────┬───────────────────────────────┤
+│  Bar: queries by PLATFORM             │  Bar: queries by PYRAMID TIER  │  ← two charts
+├───────────────────────────────────────┴───────────────────────────────┤
+│  Filters:  Platform ▾  Tier ▾  Severity ▾  Technique ▾  [search]  □dupes│  ← combine
+├───────────────────────────────────────────────────────────────────────┤
+│  ▸ [TIER] Threat name · platform · Txxxx · severity · status            │  ← expandable rows
+│      └ KQL (st.code, copy icon) · ⬇download · evasion/resilience · Sigma│
+│  ▸ … (paginated)                                                        │
+└───────────────────────────────────────────────────────────────────────┘
+```
 
-```bash
-# Run unit tests via unittest
-python -m unittest discover tests -v
+The Queries tab is a **drop-in module** (`dashboard/queries_tab.py`). Wire it into
+any Streamlit tab bar with one line:
 
-# Or run via pytest
-pytest tests -v
+```python
+from dashboard.queries_tab import render_queries_tab
+with tab_queries:
+    render_queries_tab()
 ```
 
 ---
 
-## 18. Security Considerations
-
-- **SSRF Prevention**: `/trigger` validates URLs, blocking loopback (`127.0.0.1`, `localhost`), private IPv4 spaces (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), and link-local addresses.
-- **API Key Protection**: Secrets are loaded via environment variables (`.env`). `.env` is listed in `.gitignore`.
-- **Defensive Static Analysis**: ThreatMind is purely defensive; it performs static analysis of text feeds and never executes sample binaries or payloads.
-
----
-
-## 19. Project Structure
+## Project layout
 
 ```
-ThreatMind/
-├── agents/
-├── alerts/
-├── api/
-├── config/
-├── dashboard/
-├── memory/
-├── pipeline/
-├── scheduler/
-├── scripts/
-├── tests/
-├── utils/
-├── .env.example
-├── .gitignore
-├── Dockerfile
-├── docker-compose.yml
+kql-detection-engine/
+├── run.py                     # CLI entrypoint
+├── requirements.txt
 ├── README.md
-└── requirements.txt
+├── results.json               # written by each run; the dashboards read this
+├── app/                       # the engine
+│   ├── schema.py              #   authoritative Defender Advanced Hunting schema
+│   ├── prompts.py             #   the six agent prompts + enrichment prompt
+│   ├── state.py               #   LangGraph state
+│   ├── agents.py              #   the six nodes + validator retry loop
+│   ├── graph.py               #   linear graph wiring + results assembly
+│   ├── tools.py               #   IOC/ATT&CK + lint/schema_check/dry_run/tier/dedup
+│   ├── demo_engine.py         #   offline brain (all six stages, schema-valid KQL)
+│   ├── persistence.py         #   seen_index, query library, results, history
+│   ├── llm.py                 #   Anthropic client (live mode)
+│   ├── config.py              #   sources, feeds, thresholds, severity map
+│   └── server.py              #   FastAPI app (legacy/bonus UI + JSON API)
+├── dashboard/                 # Streamlit app (primary UI)
+│   ├── app.py                 #   tab bar: Scanner · Queries · Downloads · History · Chat
+│   └── queries_tab.py         #   the Queries dashboard (self-contained module)
+├── web/index.html             # legacy single-file dashboard (auto-adapts to v2 schema)
+└── data/
+    ├── sample_posts.json      # 4 bundled write-ups for demo mode
+    ├── seen.sqlite3           # persistent post-dedup store (created on first run)
+    └── query_library.json     # persistent query-dedup store (created on first run)
 ```
 
 ---
 
-## 20. Future Improvements
+## Notes
 
-- Integration with STIX 2.1 / TAXII feeds.
-- Automated Sentinel ARM template / Bicep deployment generation.
-- Real-time SIEM live query validation against Microsoft Defender XDR APIs.
-- SOAR playbook auto-generation (Azure Logic Apps / Cortex XSOAR).
+- **Demo vs live**: demo uses hand-authored, deterministic case knowledge + the real
+  IOCs extracted from each article. Live uses Claude with the same prompts. Both pass
+  the same lint + schema check.
+- **The validator loop** rewrites a failing query (fix hallucinated fields, add a time
+  bound, tighten cost) and re-runs the checks, capped at `VALIDATOR_MAX_ITERS` (default 3);
+  anything still failing is flagged `needs_human_review` rather than silently dropped.
+- **Coverage is honestly reported**: an indicator-only behavior (e.g. C2 by domain) is
+  surfaced as a gap by the Coverage-Critic, not hidden.
+```
+# HuntGenie-PulseSec
+# HuntGenie-PulseSec

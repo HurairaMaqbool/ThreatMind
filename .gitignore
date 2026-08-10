@@ -1,5 +1,4 @@
 # Environment variables & secrets
-.env
 *.env
 *.pem
 *.key
@@ -51,8 +50,13 @@ ENV/
 atvenv/
 
 # IDE & Editor files
-.vscode/
 .idea/
 *.swp
 *.swo
 .DS_Store
+branch_structure.json
+temp_auto_push.bat
+temp_interactive_push.bat
+.gitignore
+config.bat
+node_modules

@@ -27,12 +27,12 @@ if (-not (Test-Streamlit $Python)) {
         py -3.12 -m venv C:\atvenv
     }
     & C:\atvenv\Scripts\python.exe -m pip install --upgrade pip
-    & C:\atvenv\Scripts\pip.exe install -r requirements-dashboard.txt --default-timeout=600
+    & C:\atvenv\Scripts\pip.exe install -r requirements.txt --default-timeout=600
     if ($LASTEXITCODE -ne 0) {
         Write-Host ""
         Write-Host "[ERROR] Install failed (network or permissions)." -ForegroundColor Red
         Write-Host "  Option A: Retry when internet is stable:" -ForegroundColor Yellow
-        Write-Host "    C:\atvenv\Scripts\pip install -r requirements-dashboard.txt" -ForegroundColor Gray
+        Write-Host "    C:\atvenv\Scripts\pip install -r requirements.txt" -ForegroundColor Gray
         Write-Host "  Option B: Use Docker (start Docker Desktop first):" -ForegroundColor Yellow
         Write-Host "    docker-compose up -d --build" -ForegroundColor Gray
         exit 1

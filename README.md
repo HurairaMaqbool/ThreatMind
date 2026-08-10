@@ -207,7 +207,7 @@ kql-detection-engine/
 │   ├── prompts.py             #   the six agent prompts + enrichment prompt
 │   ├── state.py               #   LangGraph state
 │   ├── agents.py              #   the six nodes + validator retry loop
-│   ├── graph.py               #   linear graph wiring + results assembly
+│   ├── graph.py                #   linear graph wiring + results assembly
 │   ├── tools.py               #   IOC/ATT&CK + lint/schema_check/dry_run/tier/dedup
 │   ├── demo_engine.py         #   offline brain (all six stages, schema-valid KQL)
 │   ├── persistence.py         #   seen_index, query library, results, history
@@ -236,6 +236,15 @@ kql-detection-engine/
   anything still failing is flagged `needs_human_review` rather than silently dropped.
 - **Coverage is honestly reported**: an indicator-only behavior (e.g. C2 by domain) is
   surfaced as a gap by the Coverage-Critic, not hidden.
-```
-# HuntGenie-PulseSec
-# HuntGenie-PulseSec
+
+---
+
+## Author / Contact
+
+**Huraira Maqbool** — AI Engineer (LLMs, RAG systems, agentic AI pipelines & multi-agent architectures)
+
+- GitHub: [github.com/HurairaMaqbool](https://github.com/HurairaMaqbool)
+- LinkedIn: [linkedin.com/in/huraira-maqbool-b696a5277](https://www.linkedin.com/in/huraira-maqbool-b696a5277/)
+- Email: [hurairac37@gmail.com](mailto:hurairac37@gmail.com)
+
+Feel free to connect, open an issue, or reach out for collaboration.

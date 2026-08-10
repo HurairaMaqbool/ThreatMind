@@ -1,0 +1,6 @@
+# Pin 1.31.x — avoids Windows MAX_PATH errors in Streamlit 1.58+ skill templates
+streamlit==1.31.0
+pandas>=2.2.0
+plotly==5.18.0
+python-dotenv>=1.0.0
+requests>=2.31.0

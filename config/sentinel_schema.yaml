@@ -1,0 +1,33 @@
+DeviceProcessEvents:
+  - FileName (string): name of the process
+  - ProcessCommandLine (string): full command line
+  - InitiatingProcessFileName (string): parent process name
+  - InitiatingProcessCommandLine (string): parent command line
+  - SHA256 (string): process hash
+  - AccountName (string): running account
+  - DeviceName (string): hostname
+  - TimeGenerated (datetime): event timestamp
+
+DeviceNetworkEvents:
+  - RemoteIP (string): destination IP
+  - RemotePort (int): destination port
+  - RemoteUrl (string): destination URL
+  - InitiatingProcessFileName (string): process that made connection
+  - DeviceName (string): hostname
+  - TimeGenerated (datetime): event timestamp
+
+DeviceFileEvents:
+  - FileName (string): file name
+  - FolderPath (string): full file path
+  - SHA256 (string): file hash
+  - InitiatingProcessFileName (string): process that touched file
+  - ActionType (string): Created, Modified, Deleted
+  - TimeGenerated (datetime): event timestamp
+
+DeviceRegistryEvents:
+  - RegistryKey (string): full registry path
+  - RegistryValueName (string): value name
+  - RegistryValueData (string): value data
+  - InitiatingProcessFileName (string): process that wrote registry
+  - ActionType (string): Set, Created, Deleted
+  - TimeGenerated (datetime): event timestamp
